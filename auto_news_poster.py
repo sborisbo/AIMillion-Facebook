@@ -1,6 +1,7 @@
 import os
 import feedparser
 from google import genai
+from google.genai import types
 import requests
 
 # Чтение ключей из переменных окружения (GitHub Secrets)
@@ -24,7 +25,7 @@ def fetch_top_news():
     return "\n\n---\n\n".join(articles)
 
 def generate_post_with_gemini(news_content):
-    """Генерация поста через Gemini API с моделью gemini-2.5-flash."""
+    """Генерация поста через Gemini API."""
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
@@ -41,9 +42,13 @@ def generate_post_with_gemini(news_content):
     4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
     """
     
+    # Используем gemini-3.6-flash и явно передаем пустой список tools, чтобы отключить AFC
     response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt
+        model='gemini-3.6-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            tools=[]
+        )
     )
     return response.text
 
