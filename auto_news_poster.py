@@ -24,7 +24,6 @@ def fetch_top_news():
     return "\n\n---\n\n".join(articles)
 
 def generate_post_with_gemini(news_content):
-    """Генерация поста через Gemini 2.5 Flash."""
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
@@ -34,6 +33,18 @@ def generate_post_with_gemini(news_content):
     {news_content}
     
     Напиши увлекательный и структурированный пост на русском языке для Facebook.
+    Требования к посту:
+    1. Цепляющий заголовок с эмодзи.
+    2. Краткий разбор 2-3 самых интересных новостей.
+    3. Призыв к обсуждению или вопрос в конце для вовлечения подписчиков.
+    4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
+    """
+    
+    # Используем сессию чата, как рекомендует сам SDK google-genai
+    chat = client.chats.create(model='gemini-2.5-flash')
+    response = chat.send_message(prompt)
+    
+    return response.textувлекательный и структурированный пост на русском языке для Facebook.
     Требования к посту:
     1. Цепляющий заголовок с эмодзи.
     2. Краткий разбор 2-3 самых интересных новостей.
