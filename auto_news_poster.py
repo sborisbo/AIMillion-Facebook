@@ -24,6 +24,7 @@ def fetch_top_news():
     return "\n\n---\n\n".join(articles)
 
 def generate_post_with_gemini(news_content):
+    """Генерация поста через Gemini API с использованием интерфейса чата."""
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
@@ -40,26 +41,13 @@ def generate_post_with_gemini(news_content):
     4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
     """
     
-    # Используем сессию чата, как рекомендует сам SDK google-genai
-    chat = client.chats.create(model='gemini-2.5-flash')
+    # Использование client.chats.create предотвращает ошибку AFC (Automatic Function Calling)
+    chat = client.chats.create(model='gemini-2.0-flash')
     response = chat.send_message(prompt)
-    
-    return response.textувлекательный и структурированный пост на русском языке для Facebook.
-    Требования к посту:
-    1. Цепляющий заголовок с эмодзи.
-    2. Краткий разбор 2-3 самых интересных новостей.
-    3. Призыв к обсуждению или вопрос в конце для вовлечения подписчиков.
-    4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
-    """
-    
-    response = client.models.generate_content(
-        model='gemini-2.0-flash',
-        contents=prompt
-    )
     return response.text
 
 def post_to_facebook_page(post_text):
-    """Публикация на Facebook Page через Graph API."""
+    """Публикация поста на Facebook Page через Graph API."""
     url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
     payload = {
         "message": post_text,
