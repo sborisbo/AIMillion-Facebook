@@ -1,18 +1,21 @@
 import os
 import feedparser
-import google.generativeai as genai
+from google import genai
 import requests
 
+# Чтение ключей из переменных окружения (GitHub Secrets)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FB_PAGE_ID = os.getenv("FB_PAGE_ID")
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN")
 
+# RSS-ленты новостей про ИИ
 RSS_FEEDS = [
     "https://news.google.com/rss/search?q=Artificial+Intelligence&hl=en-US&gl=US&ceid=US:en",
     "https://techcrunch.com/category/artificial-intelligence/feed/"
 ]
 
 def fetch_top_news():
+    """Сбор свежих новостей из RSS-лент."""
     articles = []
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
@@ -21,8 +24,8 @@ def fetch_top_news():
     return "\n\n---\n\n".join(articles)
 
 def generate_post_with_gemini(news_content):
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    """Генерация поста через Gemini 2.5 Flash."""
+    client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
     Ты — ведущий популярного сообщества "ИИ на Миллион".
@@ -38,10 +41,14 @@ def generate_post_with_gemini(news_content):
     4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
     """
     
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt
+    )
     return response.text
 
 def post_to_facebook_page(post_text):
+    """Публикация на Facebook Page через Graph API."""
     url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
     payload = {
         "message": post_text,
@@ -52,16 +59,16 @@ def post_to_facebook_page(post_text):
     result = response.json()
     
     if "id" in result:
-        print(f"Успешно опубликовано! ID: {result['id']}")
+        print(f"Успешно опубликовано на Странице! ID поста: {result['id']}")
     else:
         print(f"Ошибка Facebook API: {result}")
 
 if __name__ == "__main__":
-    print("1. Собираем новости...")
+    print("1. Собираем свежие новости...")
     raw_news = fetch_top_news()
     
-    print("2. Генерируем пост через Gemini...")
+    print("2. Генерируем пост через Gemini API...")
     final_post = generate_post_with_gemini(raw_news)
     
-    print("3. Публикуем в Facebook Page...")
+    print("3. Публикуем на Facebook Page...")
     post_to_facebook_page(final_post)
