@@ -24,7 +24,7 @@ def fetch_top_news():
     return "\n\n---\n\n".join(articles)
 
 def generate_post_with_gemini(news_content):
-    """Генерация поста через Gemini API с использованием интерфейса чата."""
+    """Генерация поста через Gemini API с моделью gemini-2.5-flash."""
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
@@ -41,9 +41,10 @@ def generate_post_with_gemini(news_content):
     4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
     """
     
-    # Использование client.chats.create предотвращает ошибку AFC (Automatic Function Calling)
-    chat = client.chats.create(model='gemini-2.0-flash')
-    response = chat.send_message(prompt)
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt
+    )
     return response.text
 
 def post_to_facebook_page(post_text):
