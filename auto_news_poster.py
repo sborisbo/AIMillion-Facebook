@@ -6,12 +6,13 @@ from google.genai import types
 from google.genai.errors import ServerError, APIError
 import requests
 
-# Чтение ключей из переменных окружения (GitHub Secrets)
+# Чтение ключей из секретов GitHub
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FB_PAGE_ID = os.getenv("FB_PAGE_ID")
+FB_GROUP_ID = os.getenv("FB_GROUP_ID")
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN")
 
-# RSS-ленты новостей про ИИ
+# RSS-ленты новостей
 RSS_FEEDS = [
     "https://news.google.com/rss/search?q=Artificial+Intelligence&hl=en-US&gl=US&ceid=US:en",
     "https://techcrunch.com/category/artificial-intelligence/feed/"
@@ -27,7 +28,7 @@ def fetch_top_news():
     return "\n\n---\n\n".join(articles)
 
 def generate_post_with_gemini(news_content):
-    """Генерация поста через Gemini API с обработкой перегрузки и резервной моделью."""
+    """Генерация поста через Gemini API с обработкой перегрузки."""
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
@@ -44,7 +45,6 @@ def generate_post_with_gemini(news_content):
     4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
     """
     
-    # Перебираем модели на случай высокой нагрузки
     models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash']
     
     for model_name in models_to_try:
@@ -65,9 +65,9 @@ def generate_post_with_gemini(news_content):
     
     raise RuntimeError("Все модели Gemini перегружены или недоступны.")
 
-def post_to_facebook_page(post_text):
-    """Публикация поста на Facebook Page через Graph API."""
-    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
+def post_to_facebook(endpoint_id, target_name, post_text):
+    """Универсальная функция публикации на Странице или в Группе."""
+    url = f"https://graph.facebook.com/v19.0/{endpoint_id}/feed"
     payload = {
         "message": post_text,
         "access_token": FB_PAGE_ACCESS_TOKEN
@@ -77,10 +77,10 @@ def post_to_facebook_page(post_text):
     result = response.json()
     
     if "id" in result:
-        print(f"Успешно опубликовано на Странице! ID поста: {result['id']}")
+        print(f"Успешно опубликовано в {target_name}! ID: {result['id']}")
     else:
-        print(f"Ошибка Facebook API: {result}")
-        raise Exception(f"Facebook API Error: {result}")
+        print(f"Ошибка публикации в {target_name}: {result}")
+        raise Exception(f"Facebook API Error ({target_name}): {result}")
 
 if __name__ == "__main__":
     print("1. Собираем свежие новости...")
@@ -90,4 +90,8 @@ if __name__ == "__main__":
     final_post = generate_post_with_gemini(raw_news)
     
     print("3. Публикуем на Facebook Page...")
-    post_to_facebook_page(final_post)
+    post_to_facebook(FB_PAGE_ID, "Страница", final_post)
+    
+    if FB_GROUP_ID:
+        print("4. Публикуем в Facebook Group...")
+        post_to_facebook(FB_GROUP_ID, "Группа", final_post)
