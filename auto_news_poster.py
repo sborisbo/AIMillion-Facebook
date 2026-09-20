@@ -65,9 +65,9 @@ def generate_post_with_gemini(news_content):
     
     raise RuntimeError("Все модели Gemini перегружены или недоступны.")
 
-def post_to_facebook(endpoint_id, target_name, post_text):
-    """Универсальная функция публикации на Странице или в Группе."""
-    url = f"https://graph.facebook.com/v19.0/{endpoint_id}/feed"
+def post_to_page(post_text):
+    """Публикация поста на Facebook Page."""
+    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
     payload = {
         "message": post_text,
         "access_token": FB_PAGE_ACCESS_TOKEN
@@ -77,10 +77,31 @@ def post_to_facebook(endpoint_id, target_name, post_text):
     result = response.json()
     
     if "id" in result:
-        print(f"Успешно опубликовано в {target_name}! ID: {result['id']}")
+        print(f"Успешно опубликовано на Странице! Post ID: {result['id']}")
+        return result['id']
     else:
-        print(f"Ошибка публикации в {target_name}: {result}")
-        raise Exception(f"Facebook API Error ({target_name}): {result}")
+        print(f"Ошибка публикации на Странице: {result}")
+        return None
+
+def share_post_to_group(post_id):
+    """Шеринг (перепост) публикации со страницы в группу."""
+    url = f"https://graph.facebook.com/v19.0/{FB_GROUP_ID}/feed"
+    
+    # Ссылка на исходный пост страницы
+    post_link = f"https://www.facebook.com/{post_id}"
+    
+    payload = {
+        "link": post_link,
+        "access_token": FB_PAGE_ACCESS_TOKEN
+    }
+    
+    response = requests.post(url, data=payload)
+    result = response.json()
+    
+    if "id" in result:
+        print(f"Успешно расшарено в Группу! Share ID: {result['id']}")
+    else:
+        print(f"Ошибка при шеринге в Группу: {result}")
 
 if __name__ == "__main__":
     print("1. Собираем свежие новости...")
@@ -90,8 +111,8 @@ if __name__ == "__main__":
     final_post = generate_post_with_gemini(raw_news)
     
     print("3. Публикуем на Facebook Page...")
-    post_to_facebook(FB_PAGE_ID, "Страница", final_post)
+    page_post_id = post_to_page(final_post)
     
-    if FB_GROUP_ID:
-        print("4. Публикуем в Facebook Group...")
-        post_to_facebook(FB_GROUP_ID, "Группа", final_post)
+    if page_post_id and FB_GROUP_ID:
+        print("4. Делимся постом в Facebook Group...")
+        share_post_to_group(page_post_id)
