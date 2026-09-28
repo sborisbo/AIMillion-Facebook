@@ -3,11 +3,10 @@ import json
 import hashlib
 import requests
 import feedparser
-import anthropic
 from datetime import datetime, timedelta
 
 # ---------------------------------------------------------------------------
-# Environment Variables
+# Переменные окружения
 # ---------------------------------------------------------------------------
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 FB_ACCESS_TOKEN = os.environ.get("FB_ACCESS_TOKEN")
@@ -15,7 +14,6 @@ FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 
 POSTED_FILE = "posted_ids.json"
 
-# RSS Feed sources
 try:
     from feeds import RSS_FEEDS
 except ImportError:
@@ -25,7 +23,7 @@ except ImportError:
     ]
 
 # ---------------------------------------------------------------------------
-# Deduplication Logic
+# База данных опубликованных новостей
 # ---------------------------------------------------------------------------
 def load_posted():
     try:
@@ -39,7 +37,7 @@ def save_posted(ids):
         json.dump(list(ids), f)
 
 # ---------------------------------------------------------------------------
-# RSS Article Fetcher
+# Сбор RSS
 # ---------------------------------------------------------------------------
 def fetch_recent_articles(hours=12):
     articles = []
@@ -61,10 +59,16 @@ def fetch_recent_articles(hours=12):
     return articles
 
 # ---------------------------------------------------------------------------
-# Claude Post Generation (Up-to-date models)
+# Генерация текста через прямой REST API (как в Telegram-боте)
 # ---------------------------------------------------------------------------
-def rewrite_with_claude(article):
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+def rewrite_with_claude_direct(article):
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+
     prompt = f"""Ты — редактор экспертного сообщества об ИИ и автоматизации для русскоязычной аудитории.
 
 Перепиши эту новость как вовлекающий, качественный пост для Facebook (3-5 абзацев):
@@ -73,41 +77,34 @@ def rewrite_with_claude(article):
 - Объясни практическую пользу для бизнеса, карьеры или автоматизации
 - Используй структурированный формат (абзацы, эмодзи, списки)
 - В конце добавь ссылку на источник: {article['link']}
-- НЕ добавляй служебные заголовки вроде "Вот ваш пост" — сразу начинай с сути.
+- НЕ добавляй служебные заголовки — сразу начинай с сути.
 
 Заголовок оригинала: {article['title']}
 Краткое содержание: {article['summary']}
 """
 
-    # Актуальные модели Anthropic
-    models_to_try = [
-        "claude-3-7-sonnet-20250219",
-        "claude-3-5-haiku-20241022",
-    ]
+    payload = {
+        "model": "claude-3-haiku-20240307",  # Базовая стабильная модель API
+        "max_tokens": 800,
+        "messages": [{"role": "user", "content": prompt}]
+    }
 
-    for model_name in models_to_try:
-        try:
-            response = client.messages.create(
-                model=model_name,
-                max_tokens=800,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            print(f"✅ Successfully generated post using model: {model_name}")
-            return response.content[0].text.strip()
-        except Exception as e:
-            print(f"⚠️ Model {model_name} failed ({e}), trying next...")
-            continue
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    data = response.json()
 
-    raise RuntimeError("🚨 None of the specified Claude models are available for this API key.")
+    if response.status_code == 200:
+        return data["content"][0]["text"].strip()
+    else:
+        raise RuntimeError(f"Ошибка API Claude ({response.status_code}): {data}")
 
 # ---------------------------------------------------------------------------
-# Facebook Page Publishing (Graph API)
+# Публикация в Facebook
 # ---------------------------------------------------------------------------
 def post_to_facebook(text):
     if not FB_ACCESS_TOKEN or not FB_PAGE_ID:
-        print("\n--- [TEST MODE: Facebook secrets not set] ---")
+        print("\n--- [ТЕСТОВЫЙ ВЫВОД ПОСТА] ---")
         print(text)
-        print("---------------------------------------------\n")
+        print("------------------------------\n")
         return True
 
     url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
@@ -117,39 +114,39 @@ def post_to_facebook(text):
     }
     response = requests.post(url, data=payload, timeout=30)
     res_data = response.json()
-    
+
     if response.status_code == 200 and "id" in res_data:
-        print(f"✅ Successfully posted to Facebook! Post ID: {res_data['id']}")
+        print(f"✅ Успешно опубликовано в Facebook! ID: {res_data['id']}")
         return True
     else:
-        print(f"❌ Facebook Graph API Error: {res_data}")
+        print(f"❌ Ошибка Facebook Graph API: {res_data}")
         return False
 
 # ---------------------------------------------------------------------------
-# Main Execution Flow
+# Главная логика
 # ---------------------------------------------------------------------------
 def main():
-    print("1. Loading posted articles history...")
+    print("1. Загрузка истории постов...")
     posted = load_posted()
-    
-    print("2. Fetching fresh news from RSS feeds...")
+
+    print("2. Сбор новостей...")
     articles = fetch_recent_articles(hours=12)
     new_articles = [a for a in articles if a["id"] not in posted]
 
     if not new_articles:
-        print("ℹ️ No new articles found in the last 12 hours.")
+        print("ℹ️ Новых статей не найдено.")
         return
 
     for article in new_articles[:1]:
-        print(f"\n3. Processing article: {article['title']}")
-        text = rewrite_with_claude(article)
-        
+        print(f"\n3. Обработка статьи: {article['title']}")
+        text = rewrite_with_claude_direct(article)
+
         success = post_to_facebook(text)
         if success:
             posted.add(article["id"])
 
     save_posted(posted)
-    print("\n🎉 Process completed successfully!")
+    print("\n🎉 Успешно завершено!")
 
 if __name__ == "__main__":
     main()
