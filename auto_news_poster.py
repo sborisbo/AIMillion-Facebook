@@ -1,4 +1,6 @@
 import os
+import time
+import random
 import requests
 
 def fetch_raw_news() -> str:
@@ -9,39 +11,50 @@ def fetch_raw_news() -> str:
         "автоматизации бизнес-процессов."
     )
 
-def generate_post_with_groq(prompt: str) -> str:
-    groq_key = os.environ.get("GROQ_API_KEY")
-    if not groq_key:
-        print("⚠️ Ошибка: GROQ_API_KEY не найден в GitHub Secrets.")
+def generate_post_with_gemini(prompt: str) -> str:
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if not gemini_key:
+        print("⚠️ GEMINI_API_KEY не найден в GitHub Secrets.")
         return None
 
-    print("2. Генерируем пост через Groq (Llama-3.3-70b)...")
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {groq_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [
-            {"role": "system", "content": "Ты профессиональный SMM-специалист и эксперт по ИИ."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 1000
-    }
+    print("2. Генерируем пост через Google Gemini...")
 
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        if response.status_code == 200:
-            data = response.json()
-            text = data['choices'][0]['message']['content']
-            print("✅ УСПЕХ: Пост успешно сгенерирован!")
-            return text.strip()
-        else:
-            print(f"⚠️ Ошибка Groq API ({response.status_code}): {response.text}")
-    except Exception as e:
-        print(f"⚠️ Сетевая ошибка при запросе к Groq: {e}")
+    # Модели Gemini для бесплатного тарифа (от более легких к тяжелым)
+    models = ["gemini-2.5-flash", "gemini-3.8-flash"]
+    
+    for model in models:
+        print(f"--> Пробуем модель: {model}")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ]
+        }
+
+        # Делаем до 5 попыток с паузой, если сервер Google занят (503)
+        for attempt in range(1, 6):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    text = data['candidates'][0]['content']['parts'][0]['text']
+                    print(f"✅ УСПЕХ: Пост сгенерирован через {model}!")
+                    return text.strip()
+                
+                elif response.status_code in [503, 429]:
+                    wait_time = attempt * 5 + random.randint(2, 5)
+                    print(f"   ⏳ Сервер занят (код {response.status_code}). Попытка {attempt}/5, ждем {wait_time} сек...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"   ⚠️ Ошибка API ({response.status_code}): {response.text[:150]}")
+                    break
+            except Exception as e:
+                print(f"   ⚠️ Ошибка сети: {e}")
+                time.sleep(3)
 
     return None
 
@@ -56,16 +69,17 @@ if __name__ == "__main__":
         raw_news = fetch_raw_news()
         
         prompt = (
+            "Ты — профессиональный SMM-специалист и эксперт по ИИ.\n"
             "На основе следующих новостей напиши вовлекающий, структурированный "
             "и интересный пост для Facebook и Telegram на русском языке. "
             "Используй эмодзи, абзацы и призыв к обсуждению.\n\n"
             f"Новости:\n{raw_news}"
         )
 
-        final_post = generate_post_with_groq(prompt)
+        final_post = generate_post_with_gemini(prompt)
         
         if not final_post:
-            raise RuntimeError("🚨 Не удалось сгенерировать пост через Groq.")
+            raise RuntimeError("🚨 Gemini не ответил после всех попыток.")
 
         publish_to_facebook(final_post)
         print("\n🎉 Скрипт успешно завершил работу!")
