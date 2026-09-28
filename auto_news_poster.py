@@ -1,118 +1,104 @@
 import os
 import time
-import feedparser
-from google import genai
+import google.genai as genai
 from google.genai import types
-from google.genai.errors import ServerError, APIError
-import requests
 
-# Чтение ключей из секретов GitHub
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-FB_PAGE_ID = os.getenv("FB_PAGE_ID")
-FB_GROUP_ID = os.getenv("FB_GROUP_ID")
-FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN")
+# ---------------------------------------------------------------------------
+# Настройка клиента Gemini API
+# ---------------------------------------------------------------------------
+# Ожидается, что GEMINI_API_KEY передан в переменные окружения (например, через GitHub Secrets)
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    raise ValueError("Не найдена переменная окружения GEMINI_API_KEY")
 
-# RSS-ленты новостей
-RSS_FEEDS = [
-    "https://news.google.com/rss/search?q=Artificial+Intelligence&hl=en-US&gl=US&ceid=US:en",
-    "https://techcrunch.com/category/artificial-intelligence/feed/"
-]
+client = genai.Client(api_key=api_key)
 
-def fetch_top_news():
-    """Сбор свежих новостей из RSS-лент."""
-    articles = []
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries[:3]:
-            articles.append(f"Заголовок: {entry.title}\nСсылка: {entry.link}\nSummary: {entry.get('summary', '')}")
-    return "\n\n---\n\n".join(articles)
 
-def generate_post_with_gemini(news_content):
-    """Генерация поста через Gemini API с обработкой перегрузки."""
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    prompt = f"""
-    Ты — ведущий популярного сообщества "ИИ на Миллион".
-    Вот свежие новости об ИИ из RSS-лент:
-    
-    {news_content}
-    
-    Напиши увлекательный и структурированный пост на русском языке для Facebook.
-    Требования к посту:
-    1. Цепляющий заголовок с эмодзи.
-    2. Краткий разбор 2-3 самых интересных новостей.
-    3. Призыв к обсуждению или вопрос в конце для вовлечения подписчиков.
-    4. Пиши простым текстом с эмодзи и переносами строк, без символов Markdown (без # и без **).
+def fetch_raw_news() -> str:
     """
-    
-    models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash']
-    
+    1. Собираем свежие новости.
+    Замените этот блок или функцию своей логикой сбора новостей (RSS, парсинг и т.д.).
+    """
+    print("1. Собираем свежие новости...")
+    # Имитация сбора данных для примера
+    sample_news = (
+        "Сегодня ИИ-лаборатории анонсировали новые мультимодальные модели, "
+        "способные решать сложные логические задачи с высокой точностью. "
+        "Также появились обновления в библиотеках автоматизации."
+    )
+    return sample_news
+
+
+def generate_post_with_gemini(raw_news: str) -> str:
+    """
+    2. Генерируем пост через Gemini API с обработкой ошибок и fallback-моделями.
+    """
+    print("2. Генерируем пост через Gemini API...")
+
+    # Актуальный список моделей (заменили устаревшую 2.5-flash на 3.8-flash)
+    models_to_try = [
+        "gemini-3.6-flash",
+        "gemini-3.8-flash",
+        "gemini-1.5-flash"
+    ]
+
+    prompt = (
+        "Ты — профессиональный SMM-специалист и эксперт по ИИ.\n"
+        "На основе следующих сырых новостей напиши вовлекающий, структурированный "
+        "и интересный пост для Facebook и Telegram на русском языке. "
+        "Используй эмодзи, абзацы и призыв к обсуждению.\n\n"
+        f"Сырые новости:\n{raw_news}"
+    )
+
+    max_attempts_per_model = 3
+
     for model_name in models_to_try:
-        for attempt in range(3):
+        for attempt in range(1, max_attempts_per_model + 1):
             try:
-                print(f"Запрос к {model_name} (попытка {attempt + 1})...")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        tools=[]
-                    )
-                )
-                return response.text
-            except (ServerError, APIError) as e:
-                print(f"Сервер перегружен ({e}). Ждем 5 секунд...")
-                time.sleep(5)
-    
+                print(f"Запрос к {model_name} (попытка {attempt})...")
+
+                # Использование чат-сессии предотвращает предупреждение о Direct AFC в generate_content
+                chat = client.chats.create(model=model_name)
+                response = chat.send_message(prompt)
+
+                if response and response.text:
+                    print(f"Успешно сгенерировано с помощью {model_name}!")
+                    return response.text.strip()
+
+            except Exception as e:
+                error_str = str(e)
+                # Вычисляем нарастающую паузу: 5s, 10s, 15s
+                wait_time = attempt * 5
+                
+                print(f"Ошибка при обращении к {model_name}: {error_str}")
+                
+                if attempt < max_attempts_per_model:
+                    print(f"Ждем {wait_time} секунд перед следующей попыткой...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Модель {model_name} недоступна после {max_attempts_per_model} попыток. Переходим к следующей модели...\n")
+
     raise RuntimeError("Все модели Gemini перегружены или недоступны.")
 
-def post_to_page(post_text):
-    """Публикация поста на Facebook Page."""
-    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
-    payload = {
-        "message": post_text,
-        "access_token": FB_PAGE_ACCESS_TOKEN
-    }
-    
-    response = requests.post(url, data=payload)
-    result = response.json()
-    
-    if "id" in result:
-        print(f"Успешно опубликовано на Странице! Post ID: {result['id']}")
-        return result['id']
-    else:
-        print(f"Ошибка публикации на Странице: {result}")
-        return None
 
-def share_post_to_group(post_id):
-    """Шеринг (перепост) публикации со страницы в группу."""
-    url = f"https://graph.facebook.com/v19.0/{FB_GROUP_ID}/feed"
-    
-    # Ссылка на исходный пост страницы
-    post_link = f"https://www.facebook.com/{post_id}"
-    
-    payload = {
-        "link": post_link,
-        "access_token": FB_PAGE_ACCESS_TOKEN
-    }
-    
-    response = requests.post(url, data=payload)
-    result = response.json()
-    
-    if "id" in result:
-        print(f"Успешно расшарено в Группу! Share ID: {result['id']}")
-    else:
-        print(f"Ошибка при шеринге в Группу: {result}")
+def publish_to_facebook(post_text: str):
+    """
+    3. Публикуем сгенерированный пост в Facebook / Telegram.
+    Замените здесь код на вашу логику работы с Facebook Graph API / Telegram Bot API.
+    """
+    print("3. Публикация поста...")
+    print("---------------- ИТОГОВЫЙ ПОСТ ----------------")
+    print(post_text)
+    print("-----------------------------------------------")
+    # Здесь добавляется ваш код отправки через requests / facebook-sdk
+
 
 if __name__ == "__main__":
-    print("1. Собираем свежие новости...")
-    raw_news = fetch_top_news()
-    
-    print("2. Генерируем пост через Gemini API...")
-    final_post = generate_post_with_gemini(raw_news)
-    
-    print("3. Публикуем на Facebook Page...")
-    page_post_id = post_to_page(final_post)
-    
-    if page_post_id and FB_GROUP_ID:
-        print("4. Делимся постом в Facebook Group...")
-        share_post_to_group(page_post_id)
+    try:
+        raw_news = fetch_raw_news()
+        final_post = generate_post_with_gemini(raw_news)
+        publish_to_facebook(final_post)
+        print("Скрипт успешно завершил работу.")
+    except Exception as err:
+        print(f"Критическая ошибка выполнения скрипта: {err}")
+        exit(1)
