@@ -61,7 +61,7 @@ def fetch_recent_articles(hours=12):
     return articles
 
 # ---------------------------------------------------------------------------
-# Claude Post Generation (Anthropic API)
+# Claude Post Generation (Anthropic API with fallback model names)
 # ---------------------------------------------------------------------------
 def rewrite_with_claude(article):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -78,12 +78,27 @@ def rewrite_with_claude(article):
 Заголовок оригинала: {article['title']}
 Краткое содержание: {article['summary']}
 """
-    response = client.messages.create(
-        model="claude-3-5-sonnet-latest",
-        max_tokens=800,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text.strip()
+
+    models_to_try = [
+        "claude-3-5-sonnet-20240620",
+        "claude-3-haiku-20240307",
+        "claude-3-opus-20240229"
+    ]
+
+    for model_name in models_to_try:
+        try:
+            response = client.messages.create(
+                model=model_name,
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            print(f"✅ Successfully generated post using model: {model_name}")
+            return response.content[0].text.strip()
+        except anthropic.NotFoundError:
+            print(f"⚠️ Model {model_name} not found on this account, trying next...")
+            continue
+
+    raise RuntimeError("🚨 None of the specified Claude models are available for this API key.")
 
 # ---------------------------------------------------------------------------
 # Facebook Page Publishing (Graph API)
@@ -125,7 +140,6 @@ def main():
         print("ℹ️ No new articles found in the last 12 hours.")
         return
 
-    # Process the most recent unposted article
     for article in new_articles[:1]:
         print(f"\n3. Processing article: {article['title']}")
         text = rewrite_with_claude(article)
