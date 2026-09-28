@@ -13,44 +13,41 @@ def fetch_raw_news() -> str:
 def generate_post_with_gemini(prompt: str) -> str:
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if not gemini_key:
-        print("⚠️ GEMINI_API_KEY не найден в переменной окружения.")
+        print("⚠️ GEMINI_API_KEY не найден.")
         return None
 
     from google import genai
     client = genai.Client(api_key=gemini_key)
     
-    # Список моделей, доступных в новом SDK на разных серверах
-    candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-3.8-flash"
-    ]
+    # Модель gemini-3.8-flash — единственная актуальная в новом SDK
+    model_name = "gemini-3.8-flash"
+    max_attempts = 4
 
-    for model_name in candidate_models:
-        print(f"--> [Gemini] Пробуем модель: {model_name}")
-        for attempt in range(1, 3):
-            try:
-                chat = client.chats.create(model=model_name)
-                response = chat.send_message(prompt)
-                if response and response.text:
-                    print(f"✅ УСПЕХ (Gemini {model_name})!")
-                    return response.text.strip()
-            except Exception as e:
-                err_text = str(e)
-                print(f"   ⚠️ Ошибка на {model_name} (попытка {attempt}): {err_text[:110]}...")
-                if "404" in err_text or "NOT_FOUND" in err_text:
-                    break  # Если модель не найдена, сразу переходим к следующей
-                time.sleep(attempt * 5 + random.randint(2, 5))
-                
+    for attempt in range(1, max_attempts + 1):
+        print(f"--> [Gemini] Пробуем {model_name} (попытка {attempt}/{max_attempts})...")
+        try:
+            chat = client.chats.create(model=model_name)
+            response = chat.send_message(prompt)
+            if response and response.text:
+                print("✅ УСПЕХ (Gemini API)!")
+                return response.text.strip()
+        except Exception as e:
+            err_text = str(e)
+            print(f"   ⚠️ Ошибка Gemini (503/High Demand): {err_text[:110]}...")
+            if attempt < max_attempts:
+                wait_time = attempt * 10 + random.randint(2, 5)
+                print(f"   ⏳ Сервер перегружен. Ждем {wait_time} сек перед повтором...")
+                time.sleep(wait_time)
+
     return None
 
 def generate_post_with_groq(prompt: str) -> str:
     groq_key = os.environ.get("GROQ_API_KEY")
     if not groq_key:
+        print("⚠️ GROQ_API_KEY не установлен в Secrets. Резервный провайдер пропущен.")
         return None
 
-    print("\n---> 🚀 Переключаемся на резервный Groq API (Llama-3.3-70b)...")
+    print("\n---> 🚀 Переключаемся на бесплатный Groq API (Llama-3.3-70b)...")
     try:
         from groq import Groq
         client = Groq(api_key=groq_key)
@@ -64,36 +61,10 @@ def generate_post_with_groq(prompt: str) -> str:
             max_tokens=1000,
         )
         if response and response.choices:
-            print("✅ УСПЕХ (Groq API)!")
+            print("✅ УСПЕХ (Groq API — Llama 3.3)!")
             return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"   ⚠️ Ошибка Groq API: {e}")
-
-    return None
-
-def generate_post_with_openrouter(prompt: str) -> str:
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    if not openrouter_key:
-        return None
-
-    print("\n---> 🌐 Переключаемся на бесплатный OpenRouter API...")
-    try:
-        import requests
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {openrouter_key}"},
-            json={
-                "model": "google/gemini-2.5-flash:free",
-                "messages": [{"role": "user", "content": prompt}]
-            },
-            timeout=30
-        )
-        res_json = response.json()
-        if "choices" in res_json and len(res_json["choices"]) > 0:
-            print("✅ УСПЕХ (OpenRouter API)!")
-            return res_json["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"   ⚠️ Ошибка OpenRouter API: {e}")
 
     return None
 
@@ -108,22 +79,17 @@ def generate_post(raw_news: str) -> str:
         f"Новости:\n{raw_news}"
     )
 
-    # 1. Основная попытка — ротация моделей Gemini (2.5-flash, 2.5-flash-lite, 2.0-flash)
+    # 1. Попытка через Gemini
     result = generate_post_with_gemini(prompt)
     if result:
         return result
 
-    # 2. Резерв №1 — Groq (если добавлен GROQ_API_KEY)
+    # 2. Мгновенный перехват через Groq (если Gemini выдает 503)
     result = generate_post_with_groq(prompt)
     if result:
         return result
 
-    # 3. Резерв №2 — OpenRouter (если добавлен OPENROUTER_API_KEY)
-    result = generate_post_with_openrouter(prompt)
-    if result:
-        return result
-
-    raise RuntimeError("🚨 Не удалось сгенерировать пост: все провайдеры недоступны.")
+    raise RuntimeError("🚨 Все провайдеры недоступны. Добавьте GROQ_API_KEY в Secrets для 100% защиты.")
 
 def publish_to_facebook(post_text: str):
     print("\n3. Публикация поста...")
