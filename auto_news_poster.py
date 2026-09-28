@@ -5,7 +5,7 @@ from google import genai
 from google.genai.errors import APIError
 
 # ---------------------------------------------------------------------------
-# Проверка и инициализация API Ключа
+# Инициализация API Ключа
 # ---------------------------------------------------------------------------
 api_key = os.environ.get("GEMINI_API_KEY")
 if not api_key:
@@ -15,10 +15,6 @@ client = genai.Client(api_key=api_key)
 
 
 def fetch_raw_news() -> str:
-    """
-    1. Собираем свежие новости.
-    Замените этот блок своей логикой сбора новостей, если требуется.
-    """
     print("1. Собираем свежие новости...")
     return (
         "Сегодня анонсировали новые обновления в сфере искусственного интеллекта. "
@@ -27,16 +23,13 @@ def fetch_raw_news() -> str:
 
 
 def generate_post_with_gemini(raw_news: str) -> str:
-    """
-    2. Генерируем пост через Gemini API с проверенными моделями и умным ожиданиями.
-    """
     print("2. Генерируем пост через Gemini API...")
 
-    # Только 100% БАЗОВЫЕ И РАБОЧИЕ ИМЕНА МОДЕЛЕЙ Google GenAI
+    # ТОЧНЫЕ АКТУАЛЬНЫЕ МОДЕЛИ, КОТОРЫЕ ТРЕБУЕТ GOOGLE API
     models_to_try = [
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-        "gemini-1.5-flash",
+        "gemini-3.8-flash",
+        "gemini-2.0-flash",
+        "gemini-3.1-pro-preview",
     ]
 
     prompt = (
@@ -56,11 +49,10 @@ def generate_post_with_gemini(raw_news: str) -> str:
             try:
                 print(f"Запрос к {model_name} (попытка {attempt} из {max_attempts})...")
 
-                # Прямой и надежный вызов модели
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                )
+                # Используем chat.send_message вместо models.generate_content:
+                # Это убирает предупреждение AFC и более устойчиво к таймаутам
+                chat = client.chats.create(model=model_name)
+                response = chat.send_message(prompt)
 
                 if response and response.text:
                     print(f"✅ УСПЕХ! Пост сгенерирован с помощью {model_name}.")
@@ -70,16 +62,15 @@ def generate_post_with_gemini(raw_news: str) -> str:
                 error_msg = str(e)
                 print(f"⚠️ Ошибка Gemini API ({model_name}): {error_msg}")
 
-                # Если модель не найдена (404) или не поддерживается, сразу переходим к следующей
+                # Если модель не найдена (404), сразу переходим к следующей модели
                 if "404" in error_msg or "NOT_FOUND" in error_msg:
-                    print(f"❌ Модель {model_name} недоступна. Переходим к следующей модели...")
+                    print(f"❌ Модель {model_name} недоступна (404). Пропускаем...")
                     break
 
-                # При перегрузке (503 / 429 / UNAVAILABLE) делаем БОЛЬШУЮ паузу
+                # При перегрузке (503 / 429 / UNAVAILABLE) делаем паузу
                 if attempt < max_attempts:
-                    # Паузы: 25 секунд, 45 секунд, 65 секунд + случайное время
-                    wait_time = (attempt * 20) + random.randint(5, 10)
-                    print(f"⏳ Сервер перегружен или лимит запросов. Ждём {wait_time} секунд перед повтором...")
+                    wait_time = (attempt * 15) + random.randint(3, 7)
+                    print(f"⏳ Сервер перегружен. Ждём {wait_time} секунд...")
                     time.sleep(wait_time)
                 else:
                     print(f"❌ Модель {model_name} исчерпала все попытки.")
@@ -88,13 +79,10 @@ def generate_post_with_gemini(raw_news: str) -> str:
                 print(f"⚠️ Непредвиденная ошибка с {model_name}: {e}")
                 break
 
-    raise RuntimeError("🚨 ОШИБКА: Все модели Gemini временно недоступны из-за высокой нагрузки Google. Попробуйте запустить workflows позже.")
+    raise RuntimeError("🚨 Все актуальные модели Gemini временно недоступны из-за высокой нагрузки.")
 
 
 def publish_to_facebook(post_text: str):
-    """
-    3. Публикация поста.
-    """
     print("\n3. Публикация поста...")
     print("------------------- ИТОГОВЫЙ ПОСТ -------------------")
     print(post_text)
@@ -110,4 +98,3 @@ if __name__ == "__main__":
     except Exception as err:
         print(f"\n💥 Критическая ошибка: {err}")
         exit(1)
-        
