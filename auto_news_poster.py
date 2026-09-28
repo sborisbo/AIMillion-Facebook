@@ -61,7 +61,7 @@ def fetch_recent_articles(hours=12):
     return articles
 
 # ---------------------------------------------------------------------------
-# Claude Post Generation (Anthropic API with fallback model names)
+# Claude Post Generation (Up-to-date models)
 # ---------------------------------------------------------------------------
 def rewrite_with_claude(article):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -79,10 +79,10 @@ def rewrite_with_claude(article):
 Краткое содержание: {article['summary']}
 """
 
+    # Актуальные модели Anthropic
     models_to_try = [
-        "claude-3-5-sonnet-20240620",
-        "claude-3-haiku-20240307",
-        "claude-3-opus-20240229"
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-haiku-20241022",
     ]
 
     for model_name in models_to_try:
@@ -94,8 +94,8 @@ def rewrite_with_claude(article):
             )
             print(f"✅ Successfully generated post using model: {model_name}")
             return response.content[0].text.strip()
-        except anthropic.NotFoundError:
-            print(f"⚠️ Model {model_name} not found on this account, trying next...")
+        except Exception as e:
+            print(f"⚠️ Model {model_name} failed ({e}), trying next...")
             continue
 
     raise RuntimeError("🚨 None of the specified Claude models are available for this API key.")
