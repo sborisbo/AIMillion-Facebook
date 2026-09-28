@@ -1,4 +1,3 @@
-feedparser
-google-genai
-requests
 anthropic
+feedparser
+requests
