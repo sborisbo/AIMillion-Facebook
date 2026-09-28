@@ -59,15 +59,31 @@ def fetch_recent_articles(hours=12):
     return articles
 
 # ---------------------------------------------------------------------------
-# Генерация текста через прямой REST API (как в Telegram-боте)
+# Динамическое получение моделей + генерация поста
 # ---------------------------------------------------------------------------
 def rewrite_with_claude_direct(article):
-    url = "https://api.anthropic.com/v1/messages"
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json"
     }
+
+    # 1. Запрашиваем список всех доступных моделей для этого ключа
+    models_url = "https://api.anthropic.com/v1/models"
+    available_models = []
+    
+    try:
+        m_res = requests.get(models_url, headers=headers, timeout=15)
+        if m_res.status_code == 200:
+            m_data = m_res.json()
+            available_models = [m["id"] for m in m_data.get("data", [])]
+            print(f"📋 Доступные модели на вашем аккаунте: {available_models}")
+    except Exception as e:
+        print(f"⚠️ Не удалось загрузить список моделей: {e}")
+
+    # Резервный список на случай, если эндпоинт /models заблокирован
+    if not available_models:
+        available_models = ["claude-3-haiku-20240307", "claude-3-5-sonnet-20240620"]
 
     prompt = f"""Ты — редактор экспертного сообщества об ИИ и автоматизации для русскоязычной аудитории.
 
@@ -83,19 +99,27 @@ def rewrite_with_claude_direct(article):
 Краткое содержание: {article['summary']}
 """
 
-    payload = {
-        "model": "claude-3-haiku-20240307",  # Базовая стабильная модель API
-        "max_tokens": 800,
-        "messages": [{"role": "user", "content": prompt}]
-    }
+    messages_url = "https://api.anthropic.com/v1/messages"
 
-    response = requests.post(url, headers=headers, json=payload, timeout=30)
-    data = response.json()
+    # 2. Пробуем перебирать найденные модели
+    for model_name in available_models:
+        print(f"--> Пробуем модель: {model_name}")
+        payload = {
+            "model": model_name,
+            "max_tokens": 800,
+            "messages": [{"role": "user", "content": prompt}]
+        }
 
-    if response.status_code == 200:
-        return data["content"][0]["text"].strip()
-    else:
-        raise RuntimeError(f"Ошибка API Claude ({response.status_code}): {data}")
+        response = requests.post(messages_url, headers=headers, json=payload, timeout=30)
+        data = response.json()
+
+        if response.status_code == 200:
+            print(f"✅ Успешно сгенерировано через: {model_name}")
+            return data["content"][0]["text"].strip()
+        else:
+            print(f"   ⚠️ Модель {model_name} не ответила ({response.status_code}): {data}")
+
+    raise RuntimeError("🚨 Ни одна из доступных моделей Claude не сработала. Проверьте статус API ключа или баланс в Anthropic Console.")
 
 # ---------------------------------------------------------------------------
 # Публикация в Facebook
