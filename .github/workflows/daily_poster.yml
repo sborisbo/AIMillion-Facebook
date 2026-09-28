@@ -2,8 +2,8 @@ name: Auto Post to Facebook
 
 on:
   schedule:
-    - cron: '0 9 * * *' # Время указывается в формате UTC. 12:00 по Израилю (UTC+3) — это 09:00 UTC.
-  workflow_dispatch: # Оставляет возможность запустить вручную при необходимости
+    - cron: '0 9 * * *' # 12:00 по Израилю (UTC+3) — это 09:00 UTC
+  workflow_dispatch: # Возможность запустить вручную
 
 jobs:
   build:
@@ -19,11 +19,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install feedparser requests google-genai
+          pip install feedparser requests anthropic
 
       - name: Run python auto_news_poster.py
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
-          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
         run: python auto_news_poster.py
