@@ -1,89 +1,141 @@
 import os
-import time
-import random
+import json
+import hashlib
 import requests
+import feedparser
+import anthropic
+from datetime import datetime, timedelta
 
-def fetch_raw_news() -> str:
-    print("1. Собираем свежие новости...")
-    return (
-        "Сегодня анонсированы новые обновления в сфере искусственного интеллекта. "
-        "Разработчики фокусируются на повышении стабильности работы агентов и "
-        "автоматизации бизнес-процессов."
+# ---------------------------------------------------------------------------
+# Переменные окружения
+# ---------------------------------------------------------------------------
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+FB_ACCESS_TOKEN = os.environ.get("FB_ACCESS_TOKEN")
+FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
+
+POSTED_FILE = "posted_ids.json"
+
+# Список RSS-лент (если нет отдельного файла feeds.py)
+try:
+    from feeds import RSS_FEEDS
+except ImportError:
+    RSS_FEEDS = [
+        "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "https://news.ycombinator.com/rss",
+    ]
+
+# ---------------------------------------------------------------------------
+# Логика работы с дедупликацией (чтобы не постить одно и то же)
+# ---------------------------------------------------------------------------
+def load_posted():
+    try:
+        with open(POSTED_FILE) as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_posted(ids):
+    with open(POSTED_FILE, "w") as f:
+        json.dump(list(ids), f)
+
+# ---------------------------------------------------------------------------
+# Сбор свежих статей из RSS
+# ---------------------------------------------------------------------------
+def fetch_recent_articles(hours=8):
+    articles = []
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    for url in RSS_FEEDS:
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:5]:
+            pub = entry.get("published_parsed")
+            if pub:
+                pub_dt = datetime(*pub[:6])
+                if pub_dt < cutoff:
+                    continue
+            articles.append({
+                "id": hashlib.md5(entry.link.encode()).hexdigest(),
+                "title": entry.title,
+                "summary": entry.get("summary", "")[:800],
+                "link": entry.link,
+            })
+    return articles
+
+# ---------------------------------------------------------------------------
+# Генерация через Claude (Anthropic)
+# ---------------------------------------------------------------------------
+def rewrite_with_claude(article):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    prompt = f"""Ты — редактор экспертного сообщества об ИИ и автоматизации для русскоязычной аудитории.
+
+Перепиши эту новость как вовлекающий, качественный пост для Facebook (3-5 абзацев):
+- На русском языке
+- Живо, легко и понятно, без канцелярита
+- Объясни практическую пользу для бизнеса, карьеры или автоматизации
+- Используй структурированный формат (абзацы, эмодзи, списки)
+- В конце добавь ссылку на источник: {article['link']}
+- НЕ добавляй служебные заголовки вроде "Вот ваш пост" — сразу начинай с сути.
+
+Заголовок оригинала: {article['title']}
+Краткое содержание: {article['summary']}
+"""
+    response = client.messages.create(
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=800,
+        messages=[{"role": "user", "content": prompt}]
     )
+    return response.content[0].text.strip()
 
-def generate_post_with_gemini(prompt: str) -> str:
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if not gemini_key:
-        print("⚠️ GEMINI_API_KEY не найден в GitHub Secrets.")
-        return None
+# ---------------------------------------------------------------------------
+# Публикация на Страницу Facebook (через Graph API)
+# ---------------------------------------------------------------------------
+def post_to_facebook(text):
+    if not FB_ACCESS_TOKEN or not FB_PAGE_ID:
+        print("\n--- [ТЕСТОВЫЙ РЕЖИМ: FB ключи не заданы] ---")
+        print(text)
+        print("-------------------------------------------\n")
+        return True
 
-    print("2. Генерируем пост через Google Gemini...")
-
-    # Модели Gemini для бесплатного тарифа (от более легких к тяжелым)
-    models = ["gemini-2.5-flash", "gemini-3.8-flash"]
+    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
+    payload = {
+        "message": text,
+        "access_token": FB_ACCESS_TOKEN
+    }
+    response = requests.post(url, data=payload, timeout=30)
+    res_data = response.json()
     
-    for model in models:
-        print(f"--> Пробуем модель: {model}")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "contents": [
-                {
-                    "parts": [{"text": prompt}]
-                }
-            ]
-        }
+    if response.status_code == 200 and "id" in res_data:
+        print(f"✅ Успешно опубликовано в Facebook! Post ID: {res_data['id']}")
+        return True
+    else:
+        print(f"❌ Ошибка публикации в Facebook: {res_data}")
+        return False
 
-        # Делаем до 5 попыток с паузой, если сервер Google занят (503)
-        for attempt in range(1, 6):
-            try:
-                response = requests.post(url, json=payload, headers=headers, timeout=30)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    text = data['candidates'][0]['content']['parts'][0]['text']
-                    print(f"✅ УСПЕХ: Пост сгенерирован через {model}!")
-                    return text.strip()
-                
-                elif response.status_code in [503, 429]:
-                    wait_time = attempt * 5 + random.randint(2, 5)
-                    print(f"   ⏳ Сервер занят (код {response.status_code}). Попытка {attempt}/5, ждем {wait_time} сек...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"   ⚠️ Ошибка API ({response.status_code}): {response.text[:150]}")
-                    break
-            except Exception as e:
-                print(f"   ⚠️ Ошибка сети: {e}")
-                time.sleep(3)
+# ---------------------------------------------------------------------------
+# Главная функция
+# ---------------------------------------------------------------------------
+def main():
+    print("1. Загрузка истории опубликованных постов...")
+    posted = load_posted()
+    
+    print("2. Сбор свежих новостей из RSS...")
+    articles = fetch_recent_articles(hours=12)
+    new_articles = [a for a in articles if a["id"] not in posted]
 
-    return None
+    if not new_articles:
+        print("ℹ️ Новых статей за последние 12 часов не найдено.")
+        return
 
-def publish_to_facebook(post_text: str):
-    print("\n3. Публикация поста...")
-    print("------------------- ИТОГОВЫЙ ПОСТ -------------------")
-    print(post_text)
-    print("-----------------------------------------------------")
+    # Берем одну самую свежую необработанную новость
+    for article in new_articles[:1]:
+        print(f"\n3. Обработка новости: {article['title']}")
+        text = rewrite_with_claude(article)
+        
+        success = post_to_facebook(text)
+        if success:
+            posted.add(article["id"])
+
+    save_posted(posted)
+    print("\n🎉 Работа завершена успешно!")
 
 if __name__ == "__main__":
-    try:
-        raw_news = fetch_raw_news()
-        
-        prompt = (
-            "Ты — профессиональный SMM-специалист и эксперт по ИИ.\n"
-            "На основе следующих новостей напиши вовлекающий, структурированный "
-            "и интересный пост для Facebook и Telegram на русском языке. "
-            "Используй эмодзи, абзацы и призыв к обсуждению.\n\n"
-            f"Новости:\n{raw_news}"
-        )
-
-        final_post = generate_post_with_gemini(prompt)
-        
-        if not final_post:
-            raise RuntimeError("🚨 Gemini не ответил после всех попыток.")
-
-        publish_to_facebook(final_post)
-        print("\n🎉 Скрипт успешно завершил работу!")
-
-    except Exception as err:
-        print(f"\n💥 Критическая ошибка: {err}")
-        exit(1)
+    main()
