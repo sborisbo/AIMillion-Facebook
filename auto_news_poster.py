@@ -59,7 +59,7 @@ def fetch_recent_articles(hours=12):
     return articles
 
 # ---------------------------------------------------------------------------
-# Динамическое получение моделей + генерация поста
+# Генерация текста через прямой REST API
 # ---------------------------------------------------------------------------
 def rewrite_with_claude_direct(article):
     headers = {
@@ -68,7 +68,6 @@ def rewrite_with_claude_direct(article):
         "content-type": "application/json"
     }
 
-    # 1. Запрашиваем список всех доступных моделей для этого ключа
     models_url = "https://api.anthropic.com/v1/models"
     available_models = []
     
@@ -81,9 +80,8 @@ def rewrite_with_claude_direct(article):
     except Exception as e:
         print(f"⚠️ Не удалось загрузить список моделей: {e}")
 
-    # Резервный список на случай, если эндпоинт /models заблокирован
     if not available_models:
-        available_models = ["claude-3-haiku-20240307", "claude-3-5-sonnet-20240620"]
+        available_models = ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"]
 
     prompt = f"""Ты — редактор экспертного сообщества об ИИ и автоматизации для русскоязычной аудитории.
 
@@ -101,7 +99,6 @@ def rewrite_with_claude_direct(article):
 
     messages_url = "https://api.anthropic.com/v1/messages"
 
-    # 2. Пробуем перебирать найденные модели
     for model_name in available_models:
         print(f"--> Пробуем модель: {model_name}")
         payload = {
@@ -114,12 +111,25 @@ def rewrite_with_claude_direct(article):
         data = response.json()
 
         if response.status_code == 200:
-            print(f"✅ Успешно сгенерировано через: {model_name}")
-            return data["content"][0]["text"].strip()
+            # Безопасный парсинг любого формата ответа
+            content_blocks = data.get("content", [])
+            full_text = ""
+            for block in content_blocks:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        full_text += block.get("text", "")
+                    elif "text" in block:
+                        full_text += block.get("text", "")
+
+            if full_text.strip():
+                print(f"✅ Успешно сгенерировано через: {model_name}")
+                return full_text.strip()
+
+            print(f"⚠️ Пустой ответ от {model_name}, пробуем следующую...")
         else:
             print(f"   ⚠️ Модель {model_name} не ответила ({response.status_code}): {data}")
 
-    raise RuntimeError("🚨 Ни одна из доступных моделей Claude не сработала. Проверьте статус API ключа или баланс в Anthropic Console.")
+    raise RuntimeError("🚨 Не удалось извлечь текст ни из одной доступной модели Claude.")
 
 # ---------------------------------------------------------------------------
 # Публикация в Facebook
