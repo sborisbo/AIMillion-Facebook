@@ -1,100 +1,315 @@
+#!/usr/bin/env python3
+"""
+Автоматический генератор новостей и постов для Telegram
+Использует Claude API для генерации контента
+"""
+
 import os
+import re
+import json
 import time
 import random
-from google import genai
-from google.genai.errors import APIError
+import requests
+from datetime import datetime
+from typing import Optional
+import anthropic
 
-# ---------------------------------------------------------------------------
-# Инициализация API Ключа
-# ---------------------------------------------------------------------------
-api_key = os.environ.get("GEMINI_API_KEY")
-if not api_key:
-    raise ValueError("ОШИБКА: Не найдена переменная окружения GEMINI_API_KEY!")
+# ============================================================================
+# КОНФИГУРАЦИЯ
+# ============================================================================
 
-client = genai.Client(api_key=api_key)
+CLAUDE_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")  # e.g., "@ai_na_million"
 
+# Файл для кэширования постов
+CACHE_FILE = "posts_cache.json"
+LOG_FILE = "posts_log.txt"
+
+# ============================================================================
+# ИНИЦИАЛИЗАЦИЯ
+# ============================================================================
+
+if not CLAUDE_API_KEY:
+    raise ValueError("❌ ОШИБКА: Не найдена переменная окружения ANTHROPIC_API_KEY!")
+
+client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+
+
+# ============================================================================
+# ФУНКЦИИ РАБОТЫ С НОВОСТЯМИ
+# ============================================================================
 
 def fetch_raw_news() -> str:
-    print("1. Собираем свежие новости...")
-    return (
-        "Сегодня анонсировали новые обновления в сфере искусственного интеллекта. "
-        "Модели стали быстрее и эффективнее в решении повседневных задач автоматизации."
-    )
-
-
-def generate_post_with_gemini(raw_news: str) -> str:
-    print("2. Генерируем пост через Gemini API...")
-
-    # ТОЧНЫЕ АКТУАЛЬНЫЕ МОДЕЛИ, КОТОРЫЕ ТРЕБУЕТ GOOGLE API
-    models_to_try = [
-        "gemini-3.8-flash",
-        "gemini-2.0-flash",
-        "gemini-3.1-pro-preview",
+    """
+    Собирает свежие новости.
+    Можно заменить на реальный парсер (RSS, web scraping, API, и т.д.)
+    """
+    print("📰 1. Собираем свежие новости...")
+    
+    # ВАРИАНТ 1: Жестко закодированные новости (для теста)
+    news_list = [
+        "Google выпустила Gemini 2.0 с улучшенной способностью к многошаговым рассуждениям.",
+        "OpenAI обновила GPT-4o с новыми возможностями видеоанализа.",
+        "Meta запустила программу для разработчиков с бесплатным доступом к моделям.",
+        "Yandex представила новую нейросетевую модель для русского языка.",
+        "Anthropic опубликовала исследование о безопасности больших языковых моделей.",
     ]
+    
+    # Выбираем случайную новость для разнообразия
+    news = random.choice(news_list)
+    
+    # ВАРИАНТ 2: Если хотите парсить реальные новости, раскомментируйте:
+    # news = fetch_from_rss()  # или другой источник
+    
+    print(f"   ✅ Найдена новость: {news[:60]}...")
+    return news
 
-    prompt = (
-        "Ты — профессиональный SMM-специалист и эксперт по ИИ.\n"
-        "На основе следующих новостей напиши вовлекающий, структурированный "
-        "и интересный пост для Facebook и Telegram на русском языке. "
-        "Используй эмодзи, абзацы и призыв к обсуждению.\n\n"
-        f"Новости:\n{raw_news}"
-    )
 
-    max_attempts = 3
-
-    for model_name in models_to_try:
-        print(f"\n---> Пробуем модель: {model_name}")
+def fetch_from_rss() -> str:
+    """
+    Опциональная функция для парсинга RSS-ленты с новостями об ИИ
+    Требует: pip install feedparser
+    """
+    try:
+        import feedparser
         
-        for attempt in range(1, max_attempts + 1):
-            try:
-                print(f"Запрос к {model_name} (попытка {attempt} из {max_attempts})...")
-
-                # Используем chat.send_message вместо models.generate_content:
-                # Это убирает предупреждение AFC и более устойчиво к таймаутам
-                chat = client.chats.create(model=model_name)
-                response = chat.send_message(prompt)
-
-                if response and response.text:
-                    print(f"✅ УСПЕХ! Пост сгенерирован с помощью {model_name}.")
-                    return response.text.strip()
-
-            except APIError as e:
-                error_msg = str(e)
-                print(f"⚠️ Ошибка Gemini API ({model_name}): {error_msg}")
-
-                # Если модель не найдена (404), сразу переходим к следующей модели
-                if "404" in error_msg or "NOT_FOUND" in error_msg:
-                    print(f"❌ Модель {model_name} недоступна (404). Пропускаем...")
-                    break
-
-                # При перегрузке (503 / 429 / UNAVAILABLE) делаем паузу
-                if attempt < max_attempts:
-                    wait_time = (attempt * 15) + random.randint(3, 7)
-                    print(f"⏳ Сервер перегружен. Ждём {wait_time} секунд...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"❌ Модель {model_name} исчерпала все попытки.")
-
-            except Exception as e:
-                print(f"⚠️ Непредвиденная ошибка с {model_name}: {e}")
-                break
-
-    raise RuntimeError("🚨 Все актуальные модели Gemini временно недоступны из-за высокой нагрузки.")
+        # RSS лента с новостями об ИИ на русском
+        feed_url = "https://habr.com/ru/rss/hub/ai/feed/"
+        feed = feedparser.parse(feed_url)
+        
+        if feed.entries:
+            latest = feed.entries[0]
+            return f"{latest.title}: {latest.summary[:200]}"
+    except ImportError:
+        print("⚠️ feedparser не установлен. Используем встроенные новости.")
+    except Exception as e:
+        print(f"⚠️ Ошибка при парсинге RSS: {e}")
+    
+    return "Сегодня в мире ИИ произошли важные события."
 
 
-def publish_to_facebook(post_text: str):
-    print("\n3. Публикация поста...")
-    print("------------------- ИТОГОВЫЙ ПОСТ -------------------")
+# ============================================================================
+# ФУНКЦИИ ГЕНЕРАЦИИ КОНТЕНТА ЧЕРЕЗ CLAUDE
+# ============================================================================
+
+def generate_post_with_claude(raw_news: str) -> str:
+    """
+    Генерирует пост через Claude API
+    Это основной способ, так как Gemini Free Tier имеет ограничения
+    """
+    print("🤖 2. Генерируем пост через Claude API...")
+    
+    prompt = f"""Ты — профессиональный SMM-специалист и эксперт по искусственному интеллекту.
+
+Напиши интересный, вовлекающий пост для Telegram-канала о новостях ИИ.
+Требования:
+- На русском языке
+- 200-400 символов
+- Используй эмодзи (2-3 штуки)
+- Структурируй текст абзацами (максимум 3 абзаца)
+- Добавь призыв к обсуждению в конце (вопрос или "что думаете?")
+- Будь оптимистичным и информативным
+
+НОВОСТЬ:
+{raw_news}
+
+Напиши ТОЛЬКО пост, без дополнительных комментариев."""
+
+    try:
+        print("   📡 Отправляем запрос к Claude...")
+        
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        
+        post_text = message.content[0].text.strip()
+        print(f"   ✅ Пост успешно сгенерирован!")
+        return post_text
+        
+    except anthropic.APIError as e:
+        print(f"   ❌ Ошибка Claude API: {e}")
+        raise
+
+
+# ============================================================================
+# ФУНКЦИИ РАБОТЫ С КЭШЕМ
+# ============================================================================
+
+def load_cache() -> dict:
+    """Загружает кэш постов из файла"""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {"posts": []}
+    return {"posts": []}
+
+
+def save_cache(cache: dict):
+    """Сохраняет кэш постов в файл"""
+    with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def add_to_cache(post_text: str, news: str):
+    """Добавляет пост в кэш"""
+    cache = load_cache()
+    cache["posts"].append({
+        "timestamp": datetime.now().isoformat(),
+        "news": news,
+        "post": post_text,
+        "published": False
+    })
+    save_cache(cache)
+    print(f"   💾 Пост добавлен в кэш ({len(cache['posts'])} всего)")
+
+
+def get_cached_post() -> Optional[str]:
+    """Возвращает кэшированный пост, если нет доступа к API"""
+    cache = load_cache()
+    for item in reversed(cache["posts"]):
+        if not item.get("published"):
+            return item["post"]
+    return None
+
+
+# ============================================================================
+# ФУНКЦИИ ПУБЛИКАЦИИ
+# ============================================================================
+
+def publish_to_telegram(post_text: str) -> bool:
+    """
+    Публикует пост в Telegram канал
+    
+    Требуется:
+    - TELEGRAM_BOT_TOKEN: токен бота от @BotFather
+    - TELEGRAM_CHANNEL_ID: ID канала (может быть @username)
+    """
+    
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+        print("⚠️ Telegram не сконфигурирован. Переходим к локальному сохранению.")
+        return False
+    
+    print("📤 3. Публикуем пост в Telegram...")
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    payload = {
+        "chat_id": TELEGRAM_CHANNEL_ID,
+        "text": post_text,
+        "parse_mode": "HTML"  # или "Markdown"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            message_id = data.get("result", {}).get("message_id")
+            print(f"   ✅ Пост опубликован! ID сообщения: {message_id}")
+            return True
+        else:
+            print(f"   ❌ Ошибка Telegram API: {response.status_code}")
+            print(f"   Ответ: {response.text}")
+            return False
+            
+    except requests.exceptions.RequestException as e:
+        print(f"   ❌ Ошибка подключения к Telegram: {e}")
+        return False
+
+
+def publish_to_console(post_text: str):
+    """Выводит пост в консоль (для тестирования)"""
+    print("\n" + "="*60)
+    print("📋 ИТОГОВЫЙ ПОСТ:")
+    print("="*60)
     print(post_text)
-    print("-----------------------------------------------------")
+    print("="*60 + "\n")
 
+
+def save_to_file(post_text: str, news: str):
+    """Сохраняет пост в текстовый файл"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    with open(LOG_FILE, 'a', encoding='utf-8') as f:
+        f.write(f"\n{'='*60}\n")
+        f.write(f"[{timestamp}]\n")
+        f.write(f"НОВОСТЬ: {news}\n")
+        f.write(f"ПОСТ:\n{post_text}\n")
+        f.write(f"{'='*60}\n")
+    
+    print(f"   💾 Пост сохранён в файл: {LOG_FILE}")
+
+
+# ============================================================================
+# ГЛАВНАЯ ФУНКЦИЯ
+# ============================================================================
+
+def main():
+    """Главная функция скрипта"""
+    
+    print("\n" + "🚀 "*10)
+    print("АВТОМАТИЧЕСКИЙ ГЕНЕРАТОР НОВОСТЕЙ И ПОСТОВ")
+    print("🚀 "*10 + "\n")
+    
+    try:
+        # 1. Собираем новости
+        raw_news = fetch_raw_news()
+        
+        # 2. Генерируем пост через Claude
+        try:
+            final_post = generate_post_with_claude(raw_news)
+        except Exception as e:
+            print(f"⚠️ Ошибка при генерации: {e}")
+            print("   📖 Пробуем использовать кэшированный пост...")
+            cached = get_cached_post()
+            if cached:
+                final_post = cached
+                print(f"   ✅ Используем кэшированный пост")
+            else:
+                print("   ❌ Кэшированные посты не найдены!")
+                raise
+        
+        # 3. Добавляем в кэш
+        add_to_cache(final_post, raw_news)
+        
+        # 4. Публикуем пост
+        publish_to_console(final_post)
+        
+        # Пробуем опубликовать в Telegram
+        telegram_success = publish_to_telegram(final_post)
+        
+        # В любом случае сохраняем в файл
+        save_to_file(final_post, raw_news)
+        
+        # Финальное сообщение
+        print("\n✨ " + "="*56 + " ✨")
+        if telegram_success:
+            print("🎉 ВСЁ УСПЕШНО! Пост опубликован в Telegram")
+        else:
+            print("⚠️ Пост сгенерирован и сохранён, но Telegram недоступен")
+        print("✨ " + "="*56 + " ✨\n")
+        
+        return 0
+        
+    except Exception as err:
+        print(f"\n💥 КРИТИЧЕСКАЯ ОШИБКА: {err}\n")
+        return 1
+
+
+# ============================================================================
+# ЗАПУСК
+# ============================================================================
 
 if __name__ == "__main__":
-    try:
-        raw_news = fetch_raw_news()
-        final_post = generate_post_with_gemini(raw_news)
-        publish_to_facebook(final_post)
-        print("\n🎉 Скрипт успешно завершил работу!")
-    except Exception as err:
-        print(f"\n💥 Критическая ошибка: {err}")
-        exit(1)
+    import sys
+    sys.exit(main())
