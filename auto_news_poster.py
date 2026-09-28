@@ -7,7 +7,7 @@ import anthropic
 from datetime import datetime, timedelta
 
 # ---------------------------------------------------------------------------
-# Переменные окружения
+# Environment Variables
 # ---------------------------------------------------------------------------
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 FB_ACCESS_TOKEN = os.environ.get("FB_ACCESS_TOKEN")
@@ -15,7 +15,7 @@ FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 
 POSTED_FILE = "posted_ids.json"
 
-# Список RSS-лент (если нет отдельного файла feeds.py)
+# RSS Feed sources
 try:
     from feeds import RSS_FEEDS
 except ImportError:
@@ -25,7 +25,7 @@ except ImportError:
     ]
 
 # ---------------------------------------------------------------------------
-# Логика работы с дедупликацией (чтобы не постить одно и то же)
+# Deduplication Logic
 # ---------------------------------------------------------------------------
 def load_posted():
     try:
@@ -39,9 +39,9 @@ def save_posted(ids):
         json.dump(list(ids), f)
 
 # ---------------------------------------------------------------------------
-# Сбор свежих статей из RSS
+# RSS Article Fetcher
 # ---------------------------------------------------------------------------
-def fetch_recent_articles(hours=8):
+def fetch_recent_articles(hours=12):
     articles = []
     cutoff = datetime.utcnow() - timedelta(hours=hours)
     for url in RSS_FEEDS:
@@ -61,7 +61,7 @@ def fetch_recent_articles(hours=8):
     return articles
 
 # ---------------------------------------------------------------------------
-# Генерация через Claude (Anthropic)
+# Claude Post Generation (Anthropic API)
 # ---------------------------------------------------------------------------
 def rewrite_with_claude(article):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -79,20 +79,20 @@ def rewrite_with_claude(article):
 Краткое содержание: {article['summary']}
 """
     response = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-3-5-sonnet-latest",
         max_tokens=800,
         messages=[{"role": "user", "content": prompt}]
     )
     return response.content[0].text.strip()
 
 # ---------------------------------------------------------------------------
-# Публикация на Страницу Facebook (через Graph API)
+# Facebook Page Publishing (Graph API)
 # ---------------------------------------------------------------------------
 def post_to_facebook(text):
     if not FB_ACCESS_TOKEN or not FB_PAGE_ID:
-        print("\n--- [ТЕСТОВЫЙ РЕЖИМ: FB ключи не заданы] ---")
+        print("\n--- [TEST MODE: Facebook secrets not set] ---")
         print(text)
-        print("-------------------------------------------\n")
+        print("---------------------------------------------\n")
         return True
 
     url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
@@ -104,30 +104,30 @@ def post_to_facebook(text):
     res_data = response.json()
     
     if response.status_code == 200 and "id" in res_data:
-        print(f"✅ Успешно опубликовано в Facebook! Post ID: {res_data['id']}")
+        print(f"✅ Successfully posted to Facebook! Post ID: {res_data['id']}")
         return True
     else:
-        print(f"❌ Ошибка публикации в Facebook: {res_data}")
+        print(f"❌ Facebook Graph API Error: {res_data}")
         return False
 
 # ---------------------------------------------------------------------------
-# Главная функция
+# Main Execution Flow
 # ---------------------------------------------------------------------------
 def main():
-    print("1. Загрузка истории опубликованных постов...")
+    print("1. Loading posted articles history...")
     posted = load_posted()
     
-    print("2. Сбор свежих новостей из RSS...")
+    print("2. Fetching fresh news from RSS feeds...")
     articles = fetch_recent_articles(hours=12)
     new_articles = [a for a in articles if a["id"] not in posted]
 
     if not new_articles:
-        print("ℹ️ Новых статей за последние 12 часов не найдено.")
+        print("ℹ️ No new articles found in the last 12 hours.")
         return
 
-    # Берем одну самую свежую необработанную новость
+    # Process the most recent unposted article
     for article in new_articles[:1]:
-        print(f"\n3. Обработка новости: {article['title']}")
+        print(f"\n3. Processing article: {article['title']}")
         text = rewrite_with_claude(article)
         
         success = post_to_facebook(text)
@@ -135,7 +135,7 @@ def main():
             posted.add(article["id"])
 
     save_posted(posted)
-    print("\n🎉 Работа завершена успешно!")
+    print("\n🎉 Process completed successfully!")
 
 if __name__ == "__main__":
     main()
